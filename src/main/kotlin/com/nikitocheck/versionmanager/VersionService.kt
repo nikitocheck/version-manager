@@ -19,7 +19,9 @@ class VersionService(
         }
 
         val newVersion = latest.systemVersion + 1
-        repository.insert(VersionsInfo(systemVersion = newVersion, versions = HashMap(latest.versions).apply {
+
+        repository.insert(VersionsInfo(systemVersion = newVersion, versions = buildMap {
+            putAll(latest.versions)
             put(serviceName, serviceVersion)
         }))
         return@withLock newVersion

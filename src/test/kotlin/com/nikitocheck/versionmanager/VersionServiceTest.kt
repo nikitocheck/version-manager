@@ -7,6 +7,8 @@ import io.mockk.verify
 import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.Test
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 
 internal class VersionServiceTest {
@@ -47,40 +49,48 @@ internal class VersionServiceTest {
     }
 
     @Test
-    fun `update version should work correct concurrently`() {
+    fun `concurrent updates shouldn't be lost`() {
         //given
-        var systemVersion = 0L
-        var versionsMap = mapOf<String, Long>()
+        val systemVersion = AtomicLong(0L)
+        val versionsMap = AtomicReference(mapOf<String, Long>())
 
         val executor = Executors.newFixedThreadPool(2)
         val versionStorage = mockk<VersionStorage>()
         val versionService = VersionService(versionStorage)
 
         every { versionStorage.getLatest() } answers {
-            VersionsInfo(systemVersion, buildMap { putAll(versionsMap) })
+            VersionsInfo(systemVersion.get(), buildMap { putAll(versionsMap.get()) })
         }
         every { versionStorage.insert(any()) } answers {
             val versionsInfo = it.invocation.args[0] as VersionsInfo
             Thread.sleep(1000)
-            systemVersion = versionsInfo.systemVersion
-            versionsMap = versionsInfo.versions
+            systemVersion.set(versionsInfo.systemVersion)
+            versionsMap.set(versionsInfo.versions)
         }
 
-        val expectedFinalSystemVersion = 4L
+        val expectedFinalSystemVersion = 5L
         val expectedFinalMap = mapOf(
                 "service1" to 1L,
-                "service2" to 3L,
-                "service3" to 1L
+                "service2" to 2L,
+                "service3" to 1L,
+                "service4" to 2L,
+                "service5" to 2L,
         )
-        val updates = listOf("service1" to 1L, "service2" to 2L, "service3" to 1L, "service2" to 2L, "service2" to 3L)
-                .map { (s, v) -> Runnable { versionService.updateServiceVersion(s, v) } }
+        val updates = listOf("service1" to 1L, "service2" to 2L, "service3" to 1L, "service4" to 2L, "service5" to 2L)
+                .map { (s, v) ->
+                    Runnable {
+                        versionService.updateServiceVersion(s, v)
+                    }
+                }
 
         //when
         updates.map(executor::submit).forEach { it.get() }
 
+        val latest = versionStorage.getLatest()!!
+
         //then
-        Assertions.assertEquals(expectedFinalSystemVersion, systemVersion)
-        Assertions.assertEquals(expectedFinalMap, versionsMap)
+        Assertions.assertEquals(expectedFinalSystemVersion, latest.systemVersion)
+        Assertions.assertEquals(expectedFinalMap, latest.versions)
 
     }
 }
